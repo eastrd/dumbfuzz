@@ -1,11 +1,13 @@
 '''
-- Command line input
+A dumb buffer overflow script that fuzzes target server.
+I've also integrated `metasploit-framework/tools/exploit/pattern_create.rb -l & -q` into this
 
-- Spike
-    - Remote
-    - Local
-- Finding Offset
+Usage:
+- Spike:
+    python .\main.py --target 192.168.217.133 --port 9999 --command "TRUN /.:/"  --mode spike
 
+- Offset + EIP interpretation:
+    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode offset --length 2400
 '''
 
 import argparse
