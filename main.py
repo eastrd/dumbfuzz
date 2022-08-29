@@ -15,8 +15,6 @@ import socket
 from time import sleep
 from math import ceil
 
-MAX_BYTES = 1024 * 1024  # 1MB
-
 
 # Find out the amount of bytes it takes for the target program to crash
 def fuzz(target: str, port: int, expect_resp: bool, stride: int, command_prefix: str, timeout_secs: int) -> int:
@@ -52,10 +50,10 @@ def send_chunk(target: str, port: int, command_prefix: str, sequence: str):
     return sequence.find(substr)
 
 
+# A lazy sequence implementation of `pattern_create` from `rapid7/rex-text`
+# {UPPER, LOWER, NUMBER}
+# Unique iteration length = 26 * 26 * 10 * 3 = 20280
 def generate_unique_pattern(length) -> str:
-    # A lazy sequence implementation of `pattern_create` from `rapid7/rex-text`
-    # {UPPER, LOWER, NUMBER}
-    # Unique iteration length = 26 * 26 * 10 * 3 = 20280
     upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     lower = upper.lower()
     num = "0123456789"
@@ -74,9 +72,9 @@ def generate_unique_pattern(length) -> str:
     return res
 
 
+# Arguments
 parser = argparse.ArgumentParser(description="Dumb fuzzing tool")
 
-# Arguments
 # -- Mode --
 parser.add_argument("--mode", type=str,
                     help="[required] attack mode: fuzz|offset")
