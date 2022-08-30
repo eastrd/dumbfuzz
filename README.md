@@ -1,7 +1,7 @@
 # dumbfuzz
 
 A dumb buffer overflow fuzzing script that integrates fuzzing, finding offset, bad character testing, verifying EIP, and sending shellcode:
-- Integrate `metasploit-framework/tools/exploit/pattern_create.rb -l & -q` for locating offset
+- Implemented the unique sequence generation based on Rapid7's `pattern_create.rb -l & -q` MSF tool for locating offset
 - You can directly copy & paste `msfvenom`'s BoF shellcode into a `.txt` file and load it up (Yeap, direct output including words like `unsigned char` and quotes)
 - Built-in Little Endian conversion for EIP values so you don't have to calculate manually
 
